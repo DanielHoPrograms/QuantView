@@ -1,17 +1,3 @@
-# QuantView-lite
-太棒了！我已經幫你把剛剛的截圖整理成 GitHub 專案用的圖片：
-
-📁 `/screenshots/` 資料夾裡有這 4 張：
-- [`screenshot1.png`](sandbox:/mnt/data/screenshots/screenshot1.png)
-- [`screenshot2.png`](sandbox:/mnt/data/screenshots/screenshot2.png)
-- [`screenshot3.png`](sandbox:/mnt/data/screenshots/screenshot3.png)
-- [`screenshot4.png`](sandbox:/mnt/data/screenshots/screenshot4.png)
-
----
-
-### ✅ 接下來是你可以直接放到 GitHub 的 `README.md` 範本：
-
-```markdown
 # 📊 StockPulseTracker
 
 An interactive technical analysis dashboard that visualizes RSI, MACD, and Bollinger Bands for selected stocks (NVDA, TSLA, META), and generates smart buy signal alerts based on market indicators.
