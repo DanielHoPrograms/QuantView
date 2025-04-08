@@ -1,0 +1,6 @@
+git init
+git add .
+git commit -m "Initial commit: stock dashboard with RSI/MACD/BB"
+git branch -M main
+git remote add origin https://github.com/danielhoprograms/stock-pulse-tracker.git
+git push -u origin main
