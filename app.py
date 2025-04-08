@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 import yfinance as yf
 from utils import (calculate_rsi, check_buy_signal, get_stock_data, 
                calculate_macd, calculate_bollinger_bands, calculate_ema, get_last_signal_time)
+from backtest import run_backtest, get_benchmark_performance
 
 # Page config
 st.set_page_config(
@@ -447,6 +448,377 @@ else:
                         fig.update_yaxes(title_text="MACD", row=3, col=1)
                     
                     st.plotly_chart(fig, use_container_width=True)
+
+# Backtesting section
+st.header("📊 Backtesting Strategies")
+st.markdown("""
+Test how different trading strategies would have performed historically. 
+Backtest your strategies with various parameters and compare them against a buy-and-hold approach.
+""")
+
+# Initialize backtesting session state variables
+if 'backtest_strategy' not in st.session_state:
+    st.session_state.backtest_strategy = 'rsi'
+if 'backtest_ticker' not in st.session_state:
+    st.session_state.backtest_ticker = 'AAPL' if 'AAPL' in st.session_state.selected_stocks else st.session_state.selected_stocks[0] if st.session_state.selected_stocks else 'AAPL'
+if 'backtest_start_date' not in st.session_state:
+    st.session_state.backtest_start_date = (datetime.now() - timedelta(days=365)).date()
+if 'backtest_end_date' not in st.session_state:
+    st.session_state.backtest_end_date = datetime.now().date()
+if 'backtest_initial_capital' not in st.session_state:
+    st.session_state.backtest_initial_capital = 10000
+if 'backtest_rsi_period' not in st.session_state:
+    st.session_state.backtest_rsi_period = 14
+if 'backtest_rsi_lower' not in st.session_state:
+    st.session_state.backtest_rsi_lower = 30
+if 'backtest_rsi_upper' not in st.session_state:
+    st.session_state.backtest_rsi_upper = 70
+if 'backtest_macd_fast' not in st.session_state:
+    st.session_state.backtest_macd_fast = 12
+if 'backtest_macd_slow' not in st.session_state:
+    st.session_state.backtest_macd_slow = 26
+if 'backtest_macd_signal' not in st.session_state:
+    st.session_state.backtest_macd_signal = 9
+if 'backtest_bb_period' not in st.session_state:
+    st.session_state.backtest_bb_period = 20
+if 'backtest_bb_std' not in st.session_state:
+    st.session_state.backtest_bb_std = 2
+
+# Backtesting form
+with st.form(key='backtest_form'):
+    bt_cols = st.columns(4)
+    
+    with bt_cols[0]:
+        # Strategy selector
+        st.session_state.backtest_strategy = st.selectbox(
+            "Strategy",
+            options=['rsi', 'macd', 'bbands', 'combined'],
+            format_func=lambda x: {
+                'rsi': 'RSI Strategy', 
+                'macd': 'MACD Strategy', 
+                'bbands': 'Bollinger Bands Strategy',
+                'combined': 'Combined Strategy'
+            }.get(x, x),
+            index=['rsi', 'macd', 'bbands', 'combined'].index(st.session_state.backtest_strategy)
+        )
+        
+        # Stock ticker
+        stock_options = st.session_state.selected_stocks if st.session_state.selected_stocks else ['AAPL']
+        if st.session_state.backtest_ticker not in stock_options:
+            stock_options.append(st.session_state.backtest_ticker)
+            
+        st.session_state.backtest_ticker = st.selectbox(
+            "Stock",
+            options=stock_options,
+            index=stock_options.index(st.session_state.backtest_ticker)
+        )
+        
+        # Initial capital
+        st.session_state.backtest_initial_capital = st.number_input(
+            "Initial Capital ($)",
+            min_value=1000,
+            max_value=1000000,
+            value=st.session_state.backtest_initial_capital,
+            step=1000
+        )
+    
+    with bt_cols[1]:
+        # Date range selectors
+        st.session_state.backtest_start_date = st.date_input(
+            "Start Date",
+            value=st.session_state.backtest_start_date,
+            max_value=datetime.now().date() - timedelta(days=30)
+        )
+        
+        st.session_state.backtest_end_date = st.date_input(
+            "End Date",
+            value=st.session_state.backtest_end_date,
+            min_value=st.session_state.backtest_start_date + timedelta(days=30),
+            max_value=datetime.now().date()
+        )
+    
+    with bt_cols[2]:
+        # Strategy-specific parameters
+        if st.session_state.backtest_strategy in ['rsi', 'combined']:
+            st.subheader("RSI Parameters")
+            st.session_state.backtest_rsi_period = st.slider(
+                "RSI Period",
+                min_value=2,
+                max_value=30,
+                value=st.session_state.backtest_rsi_period
+            )
+            st.session_state.backtest_rsi_lower = st.slider(
+                "RSI Lower Threshold",
+                min_value=10,
+                max_value=40,
+                value=st.session_state.backtest_rsi_lower
+            )
+            st.session_state.backtest_rsi_upper = st.slider(
+                "RSI Upper Threshold",
+                min_value=60,
+                max_value=90,
+                value=st.session_state.backtest_rsi_upper
+            )
+    
+    with bt_cols[3]:
+        if st.session_state.backtest_strategy in ['macd', 'combined']:
+            st.subheader("MACD Parameters")
+            st.session_state.backtest_macd_fast = st.slider(
+                "Fast Period",
+                min_value=5,
+                max_value=20,
+                value=st.session_state.backtest_macd_fast
+            )
+            st.session_state.backtest_macd_slow = st.slider(
+                "Slow Period",
+                min_value=15,
+                max_value=40,
+                value=st.session_state.backtest_macd_slow
+            )
+            st.session_state.backtest_macd_signal = st.slider(
+                "Signal Period",
+                min_value=5,
+                max_value=15,
+                value=st.session_state.backtest_macd_signal
+            )
+        
+        if st.session_state.backtest_strategy in ['bbands', 'combined']:
+            st.subheader("Bollinger Parameters")
+            st.session_state.backtest_bb_period = st.slider(
+                "Period",
+                min_value=5,
+                max_value=50,
+                value=st.session_state.backtest_bb_period
+            )
+            st.session_state.backtest_bb_std = st.slider(
+                "Standard Deviations",
+                min_value=1.0,
+                max_value=3.0,
+                value=st.session_state.backtest_bb_std,
+                step=0.1
+            )
+    
+    # Submit button
+    submit_backtest = st.form_submit_button("Run Backtest")
+
+# Process backtest when submitted
+if submit_backtest:
+    with st.spinner("Running backtest - this may take a moment..."):
+        try:
+            # Prepare strategy parameters
+            strategy_params = {}
+            
+            if st.session_state.backtest_strategy in ['rsi', 'combined']:
+                strategy_params.update({
+                    'rsi_period': st.session_state.backtest_rsi_period,
+                    'rsi_lower': st.session_state.backtest_rsi_lower,
+                    'rsi_upper': st.session_state.backtest_rsi_upper
+                })
+                
+            if st.session_state.backtest_strategy in ['macd', 'combined']:
+                strategy_params.update({
+                    'fast_period': st.session_state.backtest_macd_fast,
+                    'slow_period': st.session_state.backtest_macd_slow,
+                    'signal_period': st.session_state.backtest_macd_signal
+                })
+                
+            if st.session_state.backtest_strategy in ['bbands', 'combined']:
+                strategy_params.update({
+                    'period': st.session_state.backtest_bb_period,
+                    'num_std': st.session_state.backtest_bb_std
+                })
+            
+            # Convert dates to string format
+            start_date = st.session_state.backtest_start_date.strftime('%Y-%m-%d')
+            end_date = st.session_state.backtest_end_date.strftime('%Y-%m-%d')
+            
+            # Run backtest with selected parameters
+            backtest_results, backtest_performance = run_backtest(
+                st.session_state.backtest_ticker,
+                st.session_state.backtest_strategy,
+                start_date,
+                end_date,
+                st.session_state.backtest_initial_capital,
+                **strategy_params
+            )
+            
+            # Get benchmark performance (buy and hold)
+            benchmark_results, benchmark_performance = get_benchmark_performance(
+                st.session_state.backtest_ticker,
+                start_date,
+                end_date,
+                st.session_state.backtest_initial_capital
+            )
+            
+            if backtest_results is None or benchmark_results is None:
+                st.error("Error running backtest. Please check your parameters and try again.")
+            else:
+                # Display results
+                st.subheader("Backtest Results")
+                
+                # Summary metrics
+                metrics_cols = st.columns(4)
+                
+                with metrics_cols[0]:
+                    strategy_return = backtest_performance['total_return'] * 100
+                    benchmark_return = benchmark_performance['total_return'] * 100
+                    st.metric(
+                        "Total Return", 
+                        f"{strategy_return:.2f}%", 
+                        f"{strategy_return - benchmark_return:.2f}% vs Buy & Hold"
+                    )
+                
+                with metrics_cols[1]:
+                    st.metric(
+                        "Annual Return (CAGR)", 
+                        f"{backtest_performance['cagr']*100:.2f}%", 
+                        f"{(backtest_performance['cagr'] - benchmark_performance['cagr'])*100:.2f}%"
+                    )
+                
+                with metrics_cols[2]:
+                    st.metric(
+                        "Sharpe Ratio", 
+                        f"{backtest_performance['sharpe']:.2f}", 
+                        f"{backtest_performance['sharpe'] - benchmark_performance['sharpe']:.2f}"
+                    )
+                
+                with metrics_cols[3]:
+                    st.metric(
+                        "Max Drawdown", 
+                        f"{backtest_performance['max_drawdown']*100:.2f}%", 
+                        f"{(backtest_performance['max_drawdown'] - benchmark_performance['max_drawdown'])*100:.2f}%",
+                        delta_color="inverse"
+                    )
+                
+                # Performance chart
+                st.subheader("Performance Comparison")
+                
+                # Extract equity curves
+                strategy_equity = backtest_results.backtests[f"{st.session_state.backtest_strategy}_Strategy"].strategy.equity
+                benchmark_equity = benchmark_results.backtests["Buy_Hold"].strategy.equity
+                
+                # Normalize to 100
+                strategy_equity_norm = (strategy_equity / strategy_equity.iloc[0]) * 100
+                benchmark_equity_norm = (benchmark_equity / benchmark_equity.iloc[0]) * 100
+                
+                # Create performance chart
+                fig = go.Figure()
+                
+                fig.add_trace(
+                    go.Scatter(
+                        x=strategy_equity_norm.index,
+                        y=strategy_equity_norm,
+                        mode='lines',
+                        name=f"{st.session_state.backtest_strategy.capitalize()} Strategy",
+                        line=dict(color='blue', width=2)
+                    )
+                )
+                
+                fig.add_trace(
+                    go.Scatter(
+                        x=benchmark_equity_norm.index,
+                        y=benchmark_equity_norm,
+                        mode='lines',
+                        name='Buy & Hold',
+                        line=dict(color='gray', width=2, dash='dash')
+                    )
+                )
+                
+                fig.update_layout(
+                    title=f"Performance: {st.session_state.backtest_strategy.capitalize()} Strategy vs Buy & Hold",
+                    xaxis_title="Date",
+                    yaxis_title="Performance (%)",
+                    height=500,
+                    legend=dict(
+                        yanchor="top",
+                        y=0.99,
+                        xanchor="left",
+                        x=0.01
+                    )
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # Strategy statistics
+                with st.expander("Detailed Strategy Statistics"):
+                    st.subheader("Strategy Performance")
+                    stats_df = pd.DataFrame({
+                        "Metric": [
+                            "Total Return (%)", 
+                            "Annual Return (%)", 
+                            "Sharpe Ratio", 
+                            "Max Drawdown (%)",
+                            "Volatility (%)"
+                        ],
+                        "Strategy": [
+                            f"{backtest_performance['total_return']*100:.2f}",
+                            f"{backtest_performance['cagr']*100:.2f}",
+                            f"{backtest_performance['sharpe']:.2f}",
+                            f"{backtest_performance['max_drawdown']*100:.2f}",
+                            f"{backtest_performance['volatility']*100:.2f}"
+                        ],
+                        "Buy & Hold": [
+                            f"{benchmark_performance['total_return']*100:.2f}",
+                            f"{benchmark_performance['cagr']*100:.2f}",
+                            f"{benchmark_performance['sharpe']:.2f}",
+                            f"{benchmark_performance['max_drawdown']*100:.2f}",
+                            f"{benchmark_performance['volatility']*100:.2f}"
+                        ],
+                        "Difference": [
+                            f"{(backtest_performance['total_return'] - benchmark_performance['total_return'])*100:.2f}",
+                            f"{(backtest_performance['cagr'] - benchmark_performance['cagr'])*100:.2f}",
+                            f"{backtest_performance['sharpe'] - benchmark_performance['sharpe']:.2f}",
+                            f"{(backtest_performance['max_drawdown'] - benchmark_performance['max_drawdown'])*100:.2f}",
+                            f"{(backtest_performance['volatility'] - benchmark_performance['volatility'])*100:.2f}"
+                        ]
+                    })
+                    
+                    st.table(stats_df)
+                    
+                    # Display strategy description based on type
+                    strategy_descriptions = {
+                        'rsi': """
+                        ### RSI Strategy
+                        - **Buy Signal**: When RSI falls below the lower threshold (oversold condition)
+                        - **Sell Signal**: When RSI rises above the upper threshold (overbought condition)
+                        - **Parameters Used**: 
+                            - RSI Period: {rsi_period}
+                            - Lower Threshold: {rsi_lower}
+                            - Upper Threshold: {rsi_upper}
+                        """,
+                        'macd': """
+                        ### MACD Strategy
+                        - **Buy Signal**: When MACD line crosses above the signal line
+                        - **Sell Signal**: When MACD line crosses below the signal line
+                        - **Parameters Used**: 
+                            - Fast Period: {fast_period}
+                            - Slow Period: {slow_period}
+                            - Signal Period: {signal_period}
+                        """,
+                        'bbands': """
+                        ### Bollinger Bands Strategy
+                        - **Buy Signal**: When price falls below the lower band
+                        - **Sell Signal**: When price rises above the upper band
+                        - **Parameters Used**: 
+                            - Period: {period}
+                            - Standard Deviations: {num_std}
+                        """,
+                        'combined': """
+                        ### Combined Strategy
+                        - **Buy Signal**: When at least 2 out of 3 indicators (RSI, MACD, Bollinger Bands) give buy signals
+                        - **Parameters Used**: 
+                            - RSI Period: {rsi_period}, Lower: {rsi_lower}, Upper: {rsi_upper}
+                            - MACD Fast: {fast_period}, Slow: {slow_period}, Signal: {signal_period}
+                            - Bollinger Period: {period}, Std Dev: {num_std}
+                        """
+                    }
+                    
+                    # Format and display the strategy description
+                    strategy_desc = strategy_descriptions.get(st.session_state.backtest_strategy, "")
+                    st.markdown(strategy_desc.format(**strategy_params))
+        
+        except Exception as e:
+            st.error(f"Error running backtest: {str(e)}")
 
 # Explanatory section
 with st.expander("Understanding Technical Indicators and Buy Signals"):
