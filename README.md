@@ -65,5 +65,3 @@ Want help deploying it to **Streamlit Cloud** or **Replit Web App**? Let me know
 
 ## 🙌 Made by [@danielhoprograms](https://github.com/danielhoprograms)
 ```
-
----
