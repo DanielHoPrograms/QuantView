@@ -1,4 +1,4 @@
-imimport streamlit as st
+import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
@@ -6,6 +6,7 @@ from plotly.subplots import make_subplots
 import time
 from datetime import datetime, timedelta
 import yfinance as yf
+import threading
 from utils import (calculate_rsi, check_buy_signal, get_stock_data, 
                calculate_macd, calculate_bollinger_bands, calculate_ema, get_last_signal_time,
                calculate_stochastic_oscillator, calculate_adx, calculate_obv, detect_chart_patterns,
@@ -32,6 +33,22 @@ from fundamental_analysis import (fundamental_analysis_section, get_company_info
                               parse_screening_filters, apply_screening_filters)
 from social_features import social_features_section
 from advanced_visualization import advanced_visualization_section
+
+# Import the API server module
+from api_server import run_flask_server
+
+# Start Flask API server in a background thread
+# This provides the backend API for filtering and sorting posts
+try:
+    api_port = run_flask_server()
+    st.session_state.api_server_running = True
+    st.session_state.api_server_port = api_port
+    st.session_state.api_server_url = f"http://localhost:{api_port}"
+except Exception as e:
+    st.session_state.api_server_running = False
+    st.session_state.api_server_port = None
+    st.session_state.api_server_url = None
+    st.session_state.api_server_error = str(e)
 
 # Page config
 st.set_page_config(
@@ -2360,9 +2377,9 @@ elif st.session_state.current_page == 'backtesting':
                 except Exception as e:
                     st.error(f"Error running walk-forward analysis: {str(e)}")
 
-    # Redirect to Analysis Hub for portfolio
-    st.session_state.current_page = 'analysis_hub'
-    st.rerun()
+elif st.session_state.current_page == 'portfolio':
+    # Portfolio section
+    portfolio_section()
     
 elif st.session_state.current_page == 'signals':
     # Signal tracking section
