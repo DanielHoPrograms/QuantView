@@ -4,8 +4,36 @@ import numpy as np
 import json
 import os
 import time
+import requests
 from datetime import datetime
 import uuid
+
+# Import from auth UI
+from user_auth_ui import display_auth_status, init_auth_session_state
+
+# Helper function for API authentication
+def get_auth_headers():
+    """
+    Get authentication headers with JWT token if available
+    
+    Returns:
+        Dictionary with authorization headers
+    """
+    headers = {}
+    if 'jwt_token' in st.session_state and st.session_state.jwt_token:
+        headers["Authorization"] = f"Bearer {st.session_state.jwt_token}"
+    return headers
+    
+def get_user_id():
+    """
+    Get user ID from session state if available
+    
+    Returns:
+        User ID or None
+    """
+    if 'user' in st.session_state and st.session_state.user and 'id' in st.session_state.user:
+        return st.session_state.user['id']
+    return None
 
 # Define the post types
 POST_TYPES = {
@@ -241,7 +269,8 @@ def get_posts(post_type=None, ticker=None, tag=None, author=None, recommendation
         posts = [p for p in posts if p["post_type"] == post_type]
     
     if ticker:
-        posts = [p for p in posts if any(ticker.upper() in t.upper() for t in p["tickers"])]
+        # Check if the ticker is in the post's tickers list (case insensitive)
+        posts = [p for p in posts if p["tickers"] and any(ticker.upper() == t.upper() for t in p["tickers"])]
     
     if tag:
         posts = [p for p in posts if any(tag.lower() in t.lower() for t in p["tags"])]
@@ -250,10 +279,11 @@ def get_posts(post_type=None, ticker=None, tag=None, author=None, recommendation
         posts = [p for p in posts if p["author"].lower() == author.lower()]
     
     # Filter by recommendation type (if applicable)
-    if recommendation_type and post_type == "recommendation":
+    if recommendation_type:
         # First check in tags
         recommendation_posts = []
         for p in posts:
+            # Check in post tags
             if any(recommendation_type.lower() in t.lower() for t in p["tags"]):
                 recommendation_posts.append(p)
             # Also check in recommendation_data if available
@@ -266,7 +296,7 @@ def get_posts(post_type=None, ticker=None, tag=None, author=None, recommendation
         posts = sorted(posts, key=lambda p: p["timestamp"], reverse=True)
     elif sort_by == "oldest":
         posts = sorted(posts, key=lambda p: p["timestamp"])
-    elif sort_by == "most_liked":
+    elif sort_by == "most_liked" or sort_by == "likes":
         posts = sorted(posts, key=lambda p: p["likes"], reverse=True)
     
     return posts
@@ -333,60 +363,186 @@ def display_community_feed():
     st.header("🌐 Community Feed")
     st.write("Share and discover stock insights, trading strategies, and market discussions.")
     
+    # Display API server status if in developer mode
+    if st.session_state.get('developer_mode', False):
+        if st.session_state.get('api_server_running', False):
+            st.success(f"API Server running on port {st.session_state.get('api_server_port', 'unknown')}")
+        else:
+            st.error(f"API Server not running: {st.session_state.get('api_server_error', 'Unknown error')}")
+            
+    # Add JavaScript for API interaction
+    # Use a consistent port (5001) for API connections
+    api_url = st.session_state.get('api_server_url', 'http://0.0.0.0:5001')
+    st.markdown(f"""
+    <script>
+    // Function to call the posts API with filters
+    async function fetchPosts(filters) {{
+        try {{
+            // Build query string from filters
+            const queryParams = new URLSearchParams();
+            if (filters.type) queryParams.append('type', filters.type);
+            if (filters.ticker) queryParams.append('ticker', filters.ticker);
+            if (filters.sort) queryParams.append('sort', filters.sort);
+            if (filters.tag) queryParams.append('tag', filters.tag);
+            if (filters.author) queryParams.append('author', filters.author);
+            if (filters.recommendation_type) queryParams.append('recommendation_type', filters.recommendation_type);
+            
+            // Call API
+            const response = await fetch(`{api_url}/api/posts?${{queryParams.toString()}}`);
+            const data = await response.json();
+            return data;
+        }} catch (error) {{
+            console.error('Error fetching posts:', error);
+            return {{ success: false, error: error.message }};
+        }}
+    }}
+    
+    // Function to like a post
+    async function likePost(postId) {{
+        try {{
+            const response = await fetch(`{api_url}/api/posts/${{postId}}/like`, {{
+                method: 'POST',
+                headers: {{ 'Content-Type': 'application/json' }}
+            }});
+            const data = await response.json();
+            return data;
+        }} catch (error) {{
+            console.error('Error liking post:', error);
+            return {{ success: false, error: error.message }};
+        }}
+    }}
+    
+    // Function to add a comment
+    async function addComment(postId, commentText, author) {{
+        try {{
+            const response = await fetch(`{api_url}/api/posts/${{postId}}/comments`, {{
+                method: 'POST',
+                headers: {{ 'Content-Type': 'application/json' }},
+                body: JSON.stringify({{ text: commentText, author: author }})
+            }});
+            const data = await response.json();
+            return data;
+        }} catch (error) {{
+            console.error('Error adding comment:', error);
+            return {{ success: false, error: error.message }};
+        }}
+    }}
+    
+    // Make functions available globally
+    window.communityAPI = {{ fetchPosts, likePost, addComment }};
+    </script>
+    """, unsafe_allow_html=True)
+    
     # Create tabs for feed and creating new posts
     feed_tab, create_tab = st.tabs(["Browse Feed", "Create Post"])
     
     with feed_tab:
-        # Filtering options
-        with st.expander("Filter posts", expanded=True):
-            col1, col2 = st.columns(2)
+        # Enhanced Filtering UI
+        with st.expander("Filter and Sort Posts", expanded=True):
+            # Main Filter Categories
+            st.subheader("Filter Options")
             
-            with col1:
+            # First row: Post Type and Stock Ticker (most common filters)
+            filter_col1, filter_col2 = st.columns(2)
+            
+            with filter_col1:
+                # Post Type filter with icons
                 filter_type = st.selectbox(
                     "Post Type",
                     options=["All"] + list(POST_TYPES.keys()),
-                    format_func=lambda x: "All Types" if x == "All" else POST_TYPES.get(x, {}).get("label", x)
+                    format_func=lambda x: "All Types" if x == "All" else f"{POST_TYPES.get(x, {}).get('icon', '')} {POST_TYPES.get(x, {}).get('label', x)}",
+                    key="filter_post_type"
                 )
             
-            with col2:
-                filter_ticker = st.text_input("Stock Ticker", placeholder="e.g., AAPL")
+            with filter_col2:
+                # Stock Ticker filter with autocomplete
+                ticker_options = ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "NVDA", "META"]
+                # Add tickers from existing posts
+                for post in st.session_state.community_posts:
+                    if post["tickers"]:
+                        ticker_options.extend(post["tickers"])
+                # Remove duplicates and sort
+                ticker_options = sorted(list(set(ticker_options)))
+                
+                filter_ticker = st.selectbox(
+                    "Stock Ticker",
+                    options=[""] + ticker_options,
+                    format_func=lambda x: "All Stocks" if x == "" else x,
+                    key="filter_ticker"
+                )
             
-            # Additional filters based on selected post type
-            if filter_type == "recommendation" or filter_type == "All":
-                col3, col4 = st.columns(2)
+            # Second row: More specific filters
+            st.divider()
+            st.subheader("Advanced Filters")
+            
+            filter_col3, filter_col4, filter_col5 = st.columns(3)
+            
+            with filter_col3:
+                # Recommendation Type filter
+                recommendation_categories = ["All", "Strong Buy", "Buy", "Hold", "Sell", "Strong Sell"]
+                filter_rec_type = st.selectbox(
+                    "Recommendation Type",
+                    options=recommendation_categories,
+                    index=0,
+                    key="filter_rec_type"
+                )
+            
+            with filter_col4:
+                # Tag filter with common options
+                common_tags = ["tech", "earnings", "AI", "semiconductor", "crypto", "market events", "Fed"]
+                # Add tags from existing posts (up to a reasonable limit)
+                tag_set = set(common_tags)
+                for post in st.session_state.community_posts:
+                    if post["tags"] and len(tag_set) < 20:  # Limit to 20 options
+                        tag_set.update(post["tags"][:2])  # Add up to 2 tags from each post
+                tag_options = sorted(list(tag_set))
                 
-                with col3:
-                    # Only show if we're filtering recommendations
-                    recommendation_categories = ["All", "Strong Buy", "Buy", "Hold", "Sell", "Strong Sell"]
-                    filter_rec_type = st.selectbox(
-                        "Recommendation Type",
-                        options=recommendation_categories,
-                        index=0
-                    )
+                filter_tag = st.selectbox(
+                    "Filter by Tag",
+                    options=[""] + tag_options,
+                    format_func=lambda x: "All Tags" if x == "" else x,
+                    key="filter_tag"
+                )
+            
+            with filter_col5:
+                # Author filter with autocomplete from existing authors
+                author_set = set()
+                for post in st.session_state.community_posts:
+                    author_set.add(post["author"])
+                author_options = sorted(list(author_set))
                 
-                with col4:
-                    sort_option = st.selectbox(
-                        "Sort By",
-                        options=["latest", "oldest", "most_liked"],
-                        format_func=lambda x: "Latest" if x == "latest" else "Oldest" if x == "oldest" else "Most Liked"
-                    )
-            else:
-                # For non-recommendation filters, just show sort option in full width
+                filter_author = st.selectbox(
+                    "Filter by Author",
+                    options=[""] + author_options,
+                    format_func=lambda x: "All Authors" if x == "" else x,
+                    key="filter_author"
+                )
+            
+            # Third row: Sorting and display options
+            st.divider()
+            st.subheader("Sort and Display Options")
+            
+            sort_col1, sort_col2 = st.columns(2)
+            
+            with sort_col1:
+                # Sorting options with icons
                 sort_option = st.selectbox(
                     "Sort By",
                     options=["latest", "oldest", "most_liked"],
-                    format_func=lambda x: "Latest" if x == "latest" else "Oldest" if x == "oldest" else "Most Liked"
+                    format_func=lambda x: "⏱️ Latest First" if x == "latest" else 
+                                         "🕰️ Oldest First" if x == "oldest" else 
+                                         "❤️ Most Liked First",
+                    key="sort_option"
                 )
-                filter_rec_type = "All"  # Default value
             
-            # Add tag and author filters
-            col5, col6 = st.columns(2)
-            
-            with col5:
-                filter_tag = st.text_input("Filter by Tag", placeholder="e.g., earnings, tech")
-            
-            with col6:
-                filter_author = st.text_input("Filter by Author", placeholder="Enter username")
+            with sort_col2:
+                # Results count
+                posts_count = len(st.session_state.community_posts)
+                st.write(f"Total Posts: **{posts_count}**")
+                
+                # Reset filters button
+                if st.button("Reset All Filters", use_container_width=True):
+                    st.rerun()
         
         # Convert "All" to None for filtering
         filter_type = None if filter_type == "All" else filter_type
@@ -395,15 +551,87 @@ def display_community_feed():
         filter_tag = None if filter_tag == "" else filter_tag
         filter_author = None if filter_author == "" else filter_author
         
-        # Get filtered posts
-        posts = get_posts(
-            post_type=filter_type, 
-            ticker=filter_ticker, 
-            tag=filter_tag,
-            author=filter_author,
-            recommendation_type=filter_rec_type,
-            sort_by=sort_option
-        )
+        # Add an API Integration section for developer mode
+        if st.session_state.get('developer_mode', False):
+            with st.expander("API Integration (Developer Mode)", expanded=False):
+                st.code("""
+# This section uses the API to fetch posts instead of session state
+# API endpoint: {api_url}/api/posts
+
+# API query parameters:
+# - type: Filter by post_type (recommendation, strategy, watchlist, discussion)
+# - ticker: Filter by stock ticker
+# - sort: Sort by 'latest' or 'likes' 
+# - tag: Filter by tag
+# - author: Filter by author
+# - recommendation_type: Filter by recommendation type
+                """)
+        
+        # Check if we should use API or not
+        use_api = True
+        
+        # Get filtered posts (either from API or local storage)
+        if use_api:
+            # Import requests and handle errors
+            import requests
+            try:
+                # Build API URL with query parameters
+                api_endpoint = f"http://0.0.0.0:5001/api/posts"
+                params = {}
+                if filter_type:
+                    params['type'] = filter_type
+                if filter_ticker:
+                    params['ticker'] = filter_ticker
+                if filter_tag:
+                    params['tag'] = filter_tag
+                if filter_author:
+                    params['author'] = filter_author
+                if filter_rec_type:
+                    params['recommendation_type'] = filter_rec_type
+                params['sort'] = sort_option
+                
+                # Make API request
+                response = requests.get(api_endpoint, params=params)
+                
+                # Check if request was successful
+                if response.status_code == 200:
+                    data = response.json()
+                    posts = data.get('posts', [])
+                    # Add status indicator for developer mode
+                    if st.session_state.get('developer_mode', False):
+                        st.success(f"API Request Successful: {len(posts)} posts found")
+                else:
+                    st.error(f"API Request Failed: {response.status_code} - {response.text}")
+                    # Fall back to local data
+                    posts = get_posts(
+                        post_type=filter_type, 
+                        ticker=filter_ticker, 
+                        tag=filter_tag,
+                        author=filter_author,
+                        recommendation_type=filter_rec_type,
+                        sort_by=sort_option
+                    )
+            except Exception as e:
+                st.error(f"API Connection Error: {str(e)}. Falling back to local data.")
+                # Fall back to local data
+                posts = get_posts(
+                    post_type=filter_type, 
+                    ticker=filter_ticker, 
+                    tag=filter_tag,
+                    author=filter_author,
+                    recommendation_type=filter_rec_type,
+                    sort_by=sort_option
+                )
+        else:
+            # Use local data only
+            posts = get_posts(
+                post_type=filter_type, 
+                ticker=filter_ticker, 
+                tag=filter_tag,
+                author=filter_author,
+                recommendation_type=filter_rec_type,
+                sort_by=sort_option
+            )
         
         if not posts:
             st.info("No posts found. Be the first to share something with the community!")
@@ -425,9 +653,48 @@ def display_community_feed():
                 
                 with header_col2:
                     # Likes
+                    # Get authentication status
+                    init_auth_session_state()
+                    username, is_logged_in = display_auth_status()
+                    
+                    # Show like button with login requirement
                     like_btn = st.button(f"👍 {post['likes']}", key=f"like_{post['id']}")
                     if like_btn:
-                        like_post(post["id"])
+                        if not is_logged_in:
+                            # Create a modal-like UI for login prompt
+                            with st.container():
+                                st.warning("Login to like and comment")
+                                col1, col2, col3 = st.columns([1, 1, 1])
+                                with col2:
+                                    if st.button("Go to Login", key=f"goto_login_{post['id']}"):
+                                        # Set session state to navigate to profile/login tab
+                                        st.session_state.active_tab = "Profile"
+                                        st.session_state.show_login = True
+                                        st.rerun()
+                        elif use_api:
+                            # Use the API to like the post with authentication
+                            try:
+                                # Get authentication headers
+                                headers = get_auth_headers()
+                                    
+                                response = requests.post(
+                                    f"http://0.0.0.0:5001/api/posts/{post['id']}/like",
+                                    headers=headers,
+                                    json={"user_id": get_user_id()}
+                                )
+                                
+                                if response.status_code == 200:
+                                    data = response.json()
+                                    st.toast(f"Post liked successfully! Total likes: {data.get('new_likes', post['likes'] + 1)}")
+                                else:
+                                    st.error(f"Error liking post: {response.status_code}")
+                            except Exception as e:
+                                st.error(f"API Error: {str(e)}")
+                                # Fall back to local like function
+                                like_post(post["id"])
+                        else:
+                            # Use local function
+                            like_post(post["id"])
                         st.rerun()
                 
                 # Post content
@@ -448,14 +715,60 @@ def display_community_feed():
                 
                 # Add comment
                 with st.expander("Add a comment"):
-                    comment_text = st.text_area("Your comment", key=f"comment_text_{post['id']}", max_chars=500)
-                    if st.button("Post Comment", key=f"post_comment_{post['id']}"):
-                        if comment_text.strip():
-                            add_comment(post["id"], comment_text)
-                            st.success("Comment added!")
+                    # Get authentication status
+                    init_auth_session_state()
+                    username, is_logged_in = display_auth_status()
+                    
+                    if not is_logged_in:
+                        # Create a modal-like UI for login prompt
+                        st.warning("Login to like and comment")
+                        col1, col2, col3 = st.columns([1, 1, 1])
+                        with col2:
+                            if st.button("Go to Login", key=f"goto_login_comment_{post['id']}"):
+                                # Set session state to navigate to profile/login tab
+                                st.session_state.active_tab = "Profile"
+                                st.session_state.show_login = True
+                                st.rerun()
+                    else:
+                        comment_text = st.text_area("Your comment", key=f"comment_text_{post['id']}", max_chars=500)
+                        if st.button("Post Comment", key=f"post_comment_{post['id']}"):
+                            if comment_text.strip():
+                                if use_api:
+                                    # Use the API to add a comment with authentication
+                                    try:
+                                        # Use authenticated username
+                                        author = username
+                                        
+                                        # Get authentication headers
+                                        headers = get_auth_headers()
+                                        
+                                        # Make the API request
+                                        response = requests.post(
+                                            f"http://0.0.0.0:5001/api/posts/{post['id']}/comments",
+                                            headers=headers,
+                                            json={"text": comment_text, "author": author, "user_id": get_user_id()}
+                                        )
+                                        
+                                        # Check response
+                                        if response.status_code == 200:
+                                            data = response.json()
+                                            st.success("Comment added successfully!")
+                                        else:
+                                            st.error(f"Error adding comment: {response.status_code}")
+                                            # Fall back to local comment function
+                                            add_comment(post["id"], comment_text)
+                                    except Exception as e:
+                                        st.error(f"API Error: {str(e)}")
+                                        # Fall back to local comment function
+                                        add_comment(post["id"], comment_text)
+                            else:
+                                # Use local function
+                                add_comment(post["id"], comment_text)
+                                st.success("Comment added!")
+                            
                             time.sleep(1)
                             st.rerun()
-                        else:
+                        elif comment_text.strip() == "":
                             st.error("Comment cannot be empty.")
                 
                 st.divider()
@@ -464,7 +777,22 @@ def display_community_feed():
         # Form to create a new post
         st.subheader("Create a New Post")
         
-        # Post type selection
+        # Add Share Your Insights section for creating posts from charts and analyses
+        from social_features import display_one_click_share
+        with st.expander("📸 Share Your Insights", expanded=False):
+            display_one_click_share()
+        
+        # Get authentication status
+        init_auth_session_state()
+        username, is_logged_in = display_auth_status()
+        
+        # Require login to create posts
+        if not is_logged_in:
+            st.warning("You need to be logged in to create posts.")
+            st.info("Please go to the Profile tab and log in or register.")
+            return
+            
+        # Post type selection (only show if logged in)
         post_type = st.selectbox(
             "Post Type",
             options=list(POST_TYPES.keys()),
@@ -562,11 +890,12 @@ def display_community_feed():
             # Reset recommendation data
             recommendation_data = None
         
-        # Author (would normally be tied to user account)
-        if 'username' not in st.session_state:
-            st.session_state.username = "User" + str(int(time.time()))[-4:]
-            
-        author = st.text_input("Author", value=st.session_state.username, key="cf_author")
+        # Use the authenticated username for the author field
+        author = username
+        st.info(f"You will post as: {author}")
+        
+        # Hidden field to keep the value in the form
+        st.text_input("Author", value=author, key="cf_author_hidden", disabled=True, label_visibility="collapsed")
         
         # Submit button
         if st.button("Create Post", key="cf_submit_button"):
@@ -577,27 +906,89 @@ def display_community_feed():
             elif post_type in ["recommendation", "watchlist"] and not tickers:
                 st.error("At least one ticker is required for this post type.")
             else:
-                # Pass recommendation data if it's a recommendation post
+                # Create post data for API
+                post_data = {
+                    "title": title,
+                    "content": content,
+                    "post_type": post_type,
+                    "tickers": tickers,
+                    "tags": tags,
+                    "author": author
+                }
+                
+                # Add recommendation data if it's a recommendation post
                 if post_type == "recommendation" and 'recommendation_data' in locals():
-                    post_id = create_post(
-                        title=title,
-                        content=content,
-                        post_type=post_type,
-                        tickers=tickers,
-                        tags=tags,
-                        author=author,
-                        recommendation_data=recommendation_data
-                    )
+                    post_data["recommendation_data"] = recommendation_data
+                
+                # Create the post (either through API or locally)
+                if use_api:
+                    # Use the API to create a post
+                    try:
+                        # Get authentication headers
+                        headers = get_auth_headers()
+                        
+                        # Add user_id to the post data if available
+                        user_id = get_user_id()
+                        if user_id:
+                            post_data["user_id"] = user_id
+                            
+                        response = requests.post(
+                            f"http://0.0.0.0:5001/api/posts",
+                            headers=headers,
+                            json=post_data
+                        )
+                        
+                        if response.status_code == 200:
+                            data = response.json()
+                            post_id = data.get('post_id')
+                            st.success("Post created successfully via API!")
+                        else:
+                            st.error(f"Error creating post via API: {response.status_code} - {response.text}")
+                            # Fall back to local function
+                            post_id = create_post(
+                                title=title,
+                                content=content,
+                                post_type=post_type,
+                                tickers=tickers,
+                                tags=tags,
+                                author=author,
+                                recommendation_data=recommendation_data if post_type == "recommendation" and 'recommendation_data' in locals() else None
+                            )
+                    except Exception as e:
+                        st.error(f"API Error: {str(e)}. Using local data.")
+                        # Fall back to local function
+                        post_id = create_post(
+                            title=title,
+                            content=content,
+                            post_type=post_type,
+                            tickers=tickers,
+                            tags=tags,
+                            author=author,
+                            recommendation_data=recommendation_data if post_type == "recommendation" and 'recommendation_data' in locals() else None
+                        )
                 else:
-                    post_id = create_post(
-                        title=title,
-                        content=content,
-                        post_type=post_type,
-                        tickers=tickers,
-                        tags=tags,
-                        author=author
-                    )
-                st.success("Post created successfully!")
+                    # Use local function
+                    if post_type == "recommendation" and 'recommendation_data' in locals():
+                        post_id = create_post(
+                            title=title,
+                            content=content,
+                            post_type=post_type,
+                            tickers=tickers,
+                            tags=tags,
+                            author=author,
+                            recommendation_data=recommendation_data
+                        )
+                    else:
+                        post_id = create_post(
+                            title=title,
+                            content=content,
+                            post_type=post_type,
+                            tickers=tickers,
+                            tags=tags,
+                            author=author
+                        )
+                    st.success("Post created successfully!")
+                
                 time.sleep(1)
                 st.rerun()
 
@@ -631,3 +1022,4 @@ def format_timestamp(iso_timestamp):
             return "just now"
     except:
         return iso_timestamp
+        
