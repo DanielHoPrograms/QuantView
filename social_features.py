@@ -5,13 +5,15 @@ import plotly.graph_objects as go
 import plotly.express as px
 import json
 import os
+import requests
 import base64
 from datetime import datetime
 import uuid
 from io import BytesIO
 
-# Import our new community feed module
-from community_feed import display_community_feed
+# Import our modules
+from community_feed import display_community_feed, get_auth_headers, get_user_id
+from user_auth_ui import display_login_ui, display_profile_ui, display_auth_status, init_auth_session_state
 
 # Initialize social feature state
 def initialize_social_features():
@@ -2729,8 +2731,19 @@ def social_features_section():
     """Main function for the social features page"""
     st.title("📱 Social Hub")
     
-    # Initialize social features
+    # Initialize social features and auth session state
     initialize_social_features()
+    init_auth_session_state()
+    
+    # Get user authentication status
+    username, is_logged_in = display_auth_status()
+    
+    # Show login status in sidebar
+    with st.sidebar:
+        if is_logged_in:
+            st.success(f"Logged in as {username}")
+        else:
+            st.warning("Not logged in")
     
     # Create tabs for different social features - simplified structure
     tabs = st.tabs([
@@ -2742,14 +2755,20 @@ def social_features_section():
     with tabs[0]:
         st.header("📁 Profile & Achievements")
         
-        # Create Profile and Achievements sections
-        profile_tab, achievements_tab = st.tabs(["Profile", "Achievements"])
-        
-        with profile_tab:
-            display_user_profile()
-        
-        with achievements_tab:
-            display_achievements()
+        # Login/Registration UI or Profile based on authentication status
+        if is_logged_in:
+            # Create Profile and Achievements sections
+            profile_tab, achievements_tab = st.tabs(["Profile", "Achievements"])
+            
+            with profile_tab:
+                # Use the new authenticated profile UI
+                display_profile_ui()
+            
+            with achievements_tab:
+                display_achievements()
+        else:
+            # Show login/registration UI
+            display_login_ui()
     
     # 💬 Community Tab (Discussions + Leaderboard)
     with tabs[1]:
@@ -2773,6 +2792,4 @@ def social_features_section():
             with col2:
                 display_trending_stocks()
     
-    # One-click share section (would use the active chart in a real implementation)
-    st.divider()
-    display_one_click_share()
+    # Share functionality moved to Community Feed's Create Post section
