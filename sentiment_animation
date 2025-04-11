@@ -1,0 +1,251 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+from datetime import datetime, timedelta
+import time
+
+def sentiment_animation_section():
+    """Main function for the sentiment animation section using a simpler approach"""
+    st.title("📈 Sentiment Wave Visualization")
+    
+    # Ticker selection
+    ticker = st.text_input("Enter Stock Symbol", "AAPL").upper()
+    
+    if ticker:
+        # Fetch data
+        import yfinance as yf
+        from datetime import datetime, timedelta
+        
+        # Fetch recent data for the ticker
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=180)  # 6 months for a good amount of data
+        
+        try:
+            # Show loading spinner
+            with st.spinner(f"Fetching data for {ticker}..."):
+                stock_data = yf.download(ticker, start=start_date, end=end_date)
+            
+            if len(stock_data) > 0:
+                # Get news for this ticker from sentiment_tracker module
+                from sentiment_tracker import analyze_news_sentiment
+                
+                # Number of news articles to analyze
+                num_articles = st.slider("Number of news articles to analyze", 5, 20, 10)
+                
+                with st.spinner("Fetching and analyzing news sentiment..."):
+                    news_items = analyze_news_sentiment(ticker, limit=num_articles)
+                
+                # Create a simple visualization with news sentiment indicators
+                create_simple_sentiment_visualization(ticker, stock_data, news_items)
+            else:
+                st.error(f"No price data available for {ticker}")
+        except Exception as e:
+            st.error(f"Error fetching data: {str(e)}")
+    else:
+        st.info("Enter a stock symbol to visualize sentiment waves.")
+
+def create_simple_sentiment_visualization(ticker, price_data, news_items):
+    """Create a simple stock price chart with sentiment indicators"""
+    
+    # Debug information
+    with st.expander("Debug Information"):
+        st.write(f"Price data shape: {price_data.shape}")
+        st.write(f"Price data columns: {list(price_data.columns)}")
+        st.write(f"Number of news items: {len(news_items) if isinstance(news_items, list) else 'not a list'}")
+        
+        if isinstance(news_items, list) and len(news_items) > 0:
+            st.write("First news item:")
+            st.write(news_items[0])
+    
+    # Create a combined figure for price data and sentiment
+    fig = go.Figure()
+    
+    # Add price line
+    fig.add_trace(go.Scatter(
+        x=price_data.index,
+        y=price_data['Close'],
+        mode='lines',
+        name='Close Price',
+        line=dict(color='blue', width=2)
+    ))
+    
+    # Process news items to show on the chart
+    if isinstance(news_items, list) and len(news_items) > 0:
+        # Collect news by sentiment
+        positive_news_dates = []
+        negative_news_dates = []
+        neutral_news_dates = []
+        positive_news_prices = []
+        negative_news_prices = []
+        neutral_news_prices = []
+        
+        for news in news_items:
+            try:
+                # Parse the date
+                date_str = news.get('published', '')
+                if not date_str:
+                    continue
+                
+                # Try different date formats
+                try:
+                    if len(date_str) > 10:
+                        news_date = datetime.strptime(date_str, '%Y-%m-%d %H:%M')
+                    else:
+                        news_date = datetime.strptime(date_str, '%Y-%m-%d')
+                except:
+                    try:
+                        news_date = datetime.strptime(date_str[:10], '%Y-%m-%d')
+                    except:
+                        continue
+                
+                # Only include if date is within the price data range
+                if news_date < price_data.index[0] or news_date > price_data.index[-1]:
+                    continue
+                
+                # Get the sentiment
+                sentiment = news.get('sentiment', {})
+                label = sentiment.get('label', 'NEUTRAL')
+                
+                # Find the closest price point
+                closest_idx = price_data.index.get_indexer([news_date], method='nearest')[0]
+                price = price_data['Close'].iloc[closest_idx]
+                
+                # Categorize by sentiment
+                if label == 'POSITIVE':
+                    positive_news_dates.append(news_date)
+                    positive_news_prices.append(price)
+                elif label == 'NEGATIVE':
+                    negative_news_dates.append(news_date)
+                    negative_news_prices.append(price)
+                else:
+                    neutral_news_dates.append(news_date)
+                    neutral_news_prices.append(price)
+                    
+            except Exception as e:
+                st.warning(f"Error processing news item: {str(e)}")
+        
+        # Add scatter points for each sentiment category
+        if positive_news_dates:
+            fig.add_trace(go.Scatter(
+                x=positive_news_dates,
+                y=positive_news_prices,
+                mode='markers',
+                name='Positive News',
+                marker=dict(
+                    size=12,
+                    color='green',
+                    symbol='triangle-up'
+                )
+            ))
+        
+        if negative_news_dates:
+            fig.add_trace(go.Scatter(
+                x=negative_news_dates,
+                y=negative_news_prices,
+                mode='markers',
+                name='Negative News',
+                marker=dict(
+                    size=12,
+                    color='red',
+                    symbol='triangle-down'
+                )
+            ))
+        
+        if neutral_news_dates:
+            fig.add_trace(go.Scatter(
+                x=neutral_news_dates,
+                y=neutral_news_prices,
+                mode='markers',
+                name='Neutral News',
+                marker=dict(
+                    size=8,
+                    color='orange',
+                    symbol='circle'
+                )
+            ))
+    
+    # Update layout
+    fig.update_layout(
+        title=f"{ticker} Price with Sentiment Indicators",
+        xaxis_title="Date",
+        yaxis_title="Price",
+        height=600,
+        hovermode="closest",
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        ),
+        template="plotly_white"
+    )
+    
+    # Display the figure
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # Add explanation
+    st.write("### How to Read This Chart")
+    st.write("""
+    This chart shows the stock price with sentiment indicators from news articles:
+    - **Green triangles** pointing up represent positive news
+    - **Red triangles** pointing down represent negative news
+    - **Orange circles** represent neutral news
+    
+    Hover over the markers to see more details.
+    """)
+    
+    # Display news list with sentiment
+    st.write("### Recent News with Sentiment Analysis")
+    
+    if isinstance(news_items, list) and len(news_items) > 0:
+        for i, news in enumerate(news_items):
+            try:
+                # Get sentiment
+                sentiment = news.get('sentiment', {})
+                label = sentiment.get('label', 'NEUTRAL')
+                score = sentiment.get('score', 0.5)
+                
+                # Get date
+                date_str = news.get('published', '')
+                if date_str:
+                    try:
+                        if len(date_str) > 10:
+                            date_display = datetime.strptime(date_str, '%Y-%m-%d %H:%M').strftime('%b %d, %Y')
+                        else:
+                            date_display = datetime.strptime(date_str, '%Y-%m-%d').strftime('%b %d, %Y')
+                    except:
+                        date_display = date_str
+                else:
+                    date_display = "Unknown date"
+                
+                # Set color based on sentiment
+                if label == 'POSITIVE':
+                    color = "green"
+                elif label == 'NEGATIVE':
+                    color = "red"
+                else:
+                    color = "orange"
+                
+                # Create expandable news item
+                with st.expander(f"{news.get('title', 'News')} - {date_display}"):
+                    # Sentiment badge
+                    st.markdown(f"<span style='color:{color};font-weight:bold;'>{label} ({score:.2f})</span>", unsafe_allow_html=True)
+                    
+                    # News content
+                    st.write(news.get('summary', 'No summary available'))
+                    
+                    # Source
+                    st.write(f"Source: {news.get('publisher', 'Unknown')}")
+                    
+                    # Link if available
+                    if news.get('link'):
+                        st.write(f"[Read more]({news.get('link')})")
+            except Exception as e:
+                st.warning(f"Error displaying news item: {str(e)}")
+    else:
+        st.info("No news articles available for sentiment analysis.")
+
+if __name__ == "__main__":
+    sentiment_animation_section()
