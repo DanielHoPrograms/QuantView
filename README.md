@@ -1,65 +1,51 @@
-# 📊 StockPulseTracker
+# 📊 QuantView
 
-An interactive technical analysis dashboard that visualizes RSI, MACD, and Bollinger Bands for selected stocks (NVDA, TSLA, META), and generates smart buy signal alerts based on market indicators.
-
----
-
-## 🔍 Features
-
-- ✅ **RSI**: Detect oversold/overbought conditions
-- 📉 **MACD**: Analyze momentum and signal crossovers
-- 📊 **Bollinger Bands**: Spot volatility and breakout zones
-- 🧠 **Signal summary with strength and reasoning**
-- 📅 **Buy signal history** tracking
-- 🔗 External links to Yahoo Finance
-- 📈 Candlestick charts + indicators
+**QuantView** is a comprehensive financial analysis and learning platform that combines real-time stock analytics, backtesting strategies, and beginner-friendly gamified modules.
 
 ---
 
-## 🖼 Screenshots
+## 🚀 Live Demo
 
-### Overview Dashboard
-![screenshot1](./screenshots/screenshot1.png)
-
-### Technical Indicators: RSI, MACD
-![screenshot2](./screenshots/screenshot2.png)
-
-### Combined Signals & Band Analysis
-![screenshot3](./screenshots/screenshot3.png)
-
-### Full Stock Summary
-![screenshot4](./screenshots/screenshot4.png)
+▶️ [Launch App on Streamlit](https://quantview-lite-gxplich3pejjzppbbke29g.streamlit.app/)
 
 ---
 
-## 📦 Built With
+## 📈 Features
 
-- Python 3.11
-- [Streamlit](https://streamlit.io)
-- yfinance
-- matplotlib / plotly / pandas
+### 📊 Technical Dashboard
+- Real-time stock visualization with RSI, MACD, and Bollinger Bands
+- AI-generated buy/sell signals with strength estimation
+- Candlestick charts and momentum indicators
+- Yahoo Finance external links for deeper insights
+
+### 🧪 Strategy Backtesting
+- `backtest.py`: Run historical backtests for RSI / MACD / Bollinger Bands strategies
+- Simulate custom strategies and benchmark against buy-and-hold
+- Performance metrics: total return, CAGR, Sharpe ratio, max drawdown, volatility
+
+### 🎮 Gamified Learning for Beginners
+- `gamification.py`, `market_quiz.py`, `animated_badges.py`
+- Achievement badge system for completing missions and learning milestones
+- Fun quizzes and real-data simulations for beginners
+- Animated visual badges and motivational learning flow
+
+### 🧭 Learning Path Guidance
+- `learning_path.py`
+- Structured missions and challenges for beginner-friendly progression
+- Reinforces key financial concepts with interactive checkpoints
 
 ---
 
-## 🚀 Getting Started
+## 📦 Tech Stack
 
-```bash
-pip install -r requirements.txt
-streamlit run app.py
-```
-
----
-
-## 📜 Disclaimer
-
-> This project is for **educational and informational** purposes only.  
-> It is **not** financial advice and should not be used for trading decisions.
+- `Python`
+- `Streamlit`
+- `yfinance`, `pandas`, `plotly`, `bt`
+- Custom modules for education and gamification
 
 ---
 
-## 🌐 Demo or Deploy
-
-Want help deploying it to **Streamlit Cloud** or **Replit Web App**? Let me know!
+## 📚 Folder Structure
 
 ---
 
